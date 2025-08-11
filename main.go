@@ -9,34 +9,6 @@ import (
 	"strconv"
 )
 
-func traverseProcessTree(startPid int, currentUser *user.User) error {
-	bannedCommands := []string{"sudo", "su", "doas", "super", "calife", "pkexec", "systemd-run", "machinectl", "runuser"}
-
-	for pid := startPid; pid > 1; {
-		proc, err := GetProcessByPid(pid)
-		if err != nil {
-			break
-		}
-
-		cUid, err := strconv.Atoi(currentUser.Uid)
-		// If same user, continue up the tree
-		if proc.Uid() == cUid {
-			pid = proc.Ppid()
-			continue
-		}
-
-		// If root process, check for banned commands
-		if proc.Uid() == 0 {
-			if slices.Contains(bannedCommands, proc.Binary()) {
-				return fmt.Errorf("detected privilege escalation via %s", proc.Binary())
-			}
-		}
-
-		pid = proc.Ppid()
-	}
-	return nil
-}
-
 func isSetUid(filename string) (bool, error) {
 	info, err := os.Stat(filename)
 	if err != nil {
@@ -52,22 +24,50 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Printf("Current User: %s (UID: %s)\n\n", cUser.Username, cUser.Uid)
-
-	goproc, err := GetProcessByPid(os.Getpid())
+	goproc, err := GetProcessByPid(strconv.Itoa(os.Getpid()))
 	if err != nil {
 		panic(err)
 	}
 
+	fmt.Printf("Current User: %s (UID: %s)\n\n", goproc.User().Username, goproc.User().Uid)
+
 	fmt.Printf(
-		"Go Process Info:\n  PID: %d\n  PPID: %d\n  UID: %d\n  GID: %d\n  Binary: %s\n  Cmdline: %v\n\n",
+		"Go Parent Process Info:\n  PID: %s\n  PPID: %s\n  Username: %s (%s)\n  Groupname: %s (%s)\n  Binary: %s\n  Cmdline: %v\n\n",
 		goproc.Pid(),
 		goproc.Ppid(),
+		goproc.User().Username,
 		goproc.Uid(),
+		goproc.Group().Name,
 		goproc.Gid(),
 		goproc.Binary(),
 		goproc.Cmdline(),
 	)
+
+	ppid := goproc.Ppid()
+	for ppid > "1" {
+		proc, err := GetProcessByPid(ppid)
+		if err != nil {
+			break
+		}
+
+		fmt.Printf(
+			"Parent Process Info:\n  PID: %s\n  PPID: %s\n  UID: %s\n  GID: %s\n  Binary: %s\n  Cmdline: %v\n State: %v\n\n",
+			proc.Pid(),
+			proc.Ppid(),
+			proc.Uid(),
+			proc.Gid(),
+			proc.Binary(),
+			proc.Cmdline(),
+			proc.State(),
+		)
+
+		if goproc.Uid() != "0" && proc.Uid() == "0" && proc.Ppid() != "0" /*&& proc.Binary() != "cron" && proc.Binary() != "crond"*/ {
+			fmt.Println(fmt.Errorf("found root process in parent tree: %s (PID: %s)", proc.Binary(), proc.Pid()))
+			// os.Exit(1)
+		}
+
+		ppid = proc.Ppid()
+	}
 
 	rprocs, err := GetUserProcesses("root")
 	if err != nil {
@@ -92,17 +92,16 @@ func main() {
 		if isSetuid {
 			fmt.Printf("  Command: %s\n", cmdPath)
 			fmt.Printf(
-				"    PID: %d\n    PPID: %d\n    UID: %d\n    Cmdline: %s\n    Is %s setuid? %v\n\n",
+				"    PID: %s\n    PPID: %s\n    UID: %s\n    Cmdline: %s\n    Is %v setuid? %v\n\n",
 				proc.pid,
 				proc.ppid,
 				proc.uid,
+				proc.cmdline,
 				cmdPath,
 				isSetuid,
-				proc.cmdline,
 			)
 
-			cUid, _ := strconv.Atoi(cUser.Uid)
-			if slices.Contains(proc.cmdline, cUser.Username) && proc.uid != cUid {
+			if slices.Contains(proc.cmdline, cUser.Username) && proc.uid != cUser.Uid {
 				panic(fmt.Errorf("found process with current user in it %v", proc))
 			}
 		}

@@ -13,28 +13,30 @@ import (
 )
 
 type Process struct {
-	pid     int
-	ppid    int
+	pid     string
+	ppid    string
 	state   string
-	uid     int
-	gid     int
+	uid     string
+	gid     string
 	binary  string
 	cmdline []string
+	user    *user.User
+	group   *user.Group
 }
 
-func (p *Process) Pid() int {
+func (p *Process) Pid() string {
 	return p.pid
 }
 
-func (p *Process) Ppid() int {
+func (p *Process) Ppid() string {
 	return p.ppid
 }
 
-func (p *Process) Uid() int {
+func (p *Process) Uid() string {
 	return p.uid
 }
 
-func (p *Process) Gid() int {
+func (p *Process) Gid() string {
 	return p.gid
 }
 
@@ -46,36 +48,49 @@ func (p *Process) Cmdline() []string {
 	return p.cmdline
 }
 
-func getUIDFromUser(username string) (int, error) {
-	u, err := user.Lookup(username)
-	if err != nil {
-		return -1, fmt.Errorf("user not found: %s", username)
+func (p *Process) User() *user.User {
+	if p.user != nil {
+		return p.user
 	}
-
-	uid, err := strconv.Atoi(u.Uid)
-	if err != nil {
-		return -1, fmt.Errorf("invalid UID: %s", err)
-	}
-
-	return uid, nil
+	return nil
 }
 
-func GetProcessByPid(pid int) (*Process, error) {
-	pidDir := fmt.Sprintf("/proc/%d", pid)
+func (p *Process) Group() *user.Group {
+	if p.group != nil {
+		return p.group
+	}
+	return nil
+}
+
+func (p *Process) State() string {
+	return p.state
+}
+
+func getUIDFromUser(username string) (string, error) {
+	u, err := user.Lookup(username)
+	if err != nil {
+		return "-1", fmt.Errorf("user not found: %s", username)
+	}
+
+	return u.Uid, nil
+}
+
+func GetProcessByPid(pid string) (*Process, error) {
+	pidDir := fmt.Sprintf("/proc/%s", pid)
 
 	procStat, err := os.Stat(pidDir)
 	if err != nil {
-		return nil, fmt.Errorf("pid %d: does not exist", pid)
+		return nil, fmt.Errorf("pid %s: does not exist", pid)
 	}
 
 	if !procStat.IsDir() {
-		return nil, fmt.Errorf("could not get pid information, pid %d", pid)
+		return nil, fmt.Errorf("could not get pid information, pid %s", pid)
 	}
 
 	statPath := path.Join(pidDir, "stat")
 	statBytes, err := os.ReadFile(statPath)
 	if err != nil {
-		return nil, fmt.Errorf("could not read stat file for PID %d: %v", pid, err)
+		return nil, fmt.Errorf("could not read stat file for PID %s: %v", pid, err)
 	}
 
 	stats := strings.TrimSpace(string(statBytes))
@@ -85,37 +100,49 @@ func GetProcessByPid(pid int) (*Process, error) {
 	statSlice := strings.Split(strings.TrimSpace(stats[binStart+binEnd+1:]), " ")
 
 	if len(statSlice) < 2 {
-		return nil, fmt.Errorf("invalid stat format for PID %d", pid)
+		return nil, fmt.Errorf("invalid stat format for PID %s", pid)
 	}
 
 	state := statSlice[0]
-	ppid, _ := strconv.Atoi(statSlice[1])
+	ppid := statSlice[1]
 
 	cmdlinePath := path.Join(pidDir, "cmdline")
 	cmdlineBytes, err := os.ReadFile(cmdlinePath)
 	if err != nil {
-		return nil, fmt.Errorf("could not read cmdline file for PID %d: %v", pid, err)
+		return nil, fmt.Errorf("could not read cmdline file for PID %s: %v", pid, err)
 	}
 
-	cmdline := strings.Split(string(cmdlineBytes), "\x00")
+	cmdline := strings.Split(strings.TrimSpace(string(cmdlineBytes)), "\x00")
 
 	dsys, err := os.Stat(pidDir)
 	if err != nil {
-		return nil, fmt.Errorf("could not stat process directory for PID %d: %v", pid, err)
+		return nil, fmt.Errorf("could not stat process directory for PID %s: %v", pid, err)
 	}
 	stat, ok := dsys.Sys().(*syscall.Stat_t)
 	if !ok {
-		return nil, fmt.Errorf("could not get syscall stat for PID %d", pid)
+		return nil, fmt.Errorf("could not get syscall stat for PID %s", pid)
+	}
+
+	username, err := user.LookupId(strconv.Itoa(int(stat.Uid)))
+	if err != nil {
+		return nil, fmt.Errorf("could not lookup user for UID %d: %v", stat.Uid, err)
+	}
+
+	group, err := user.LookupGroupId(strconv.Itoa(int(stat.Gid)))
+	if err != nil {
+		return nil, fmt.Errorf("could not lookup group for GID %d: %v", stat.Gid, err)
 	}
 
 	return &Process{
 		pid:     pid,
-		uid:     int(stat.Uid),
-		gid:     int(stat.Gid),
+		uid:     strconv.Itoa(int(stat.Uid)),
+		gid:     strconv.Itoa(int(stat.Gid)),
 		binary:  binary,
 		cmdline: cmdline,
 		state:   state,
 		ppid:    ppid,
+		user:    username,
+		group:   group,
 	}, nil
 }
 
@@ -164,10 +191,7 @@ func GetProcesses() ([]Process, error) {
 				continue
 			}
 
-			pid, err := strconv.Atoi(dir.Name())
-			if err != nil {
-				continue
-			}
+			pid := dir.Name()
 
 			proc, err := GetProcessByPid(pid)
 			if err != nil {

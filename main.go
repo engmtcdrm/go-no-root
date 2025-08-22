@@ -7,7 +7,10 @@ import (
 	"os/user"
 	"slices"
 	"strconv"
+	"strings"
 )
+
+const width = 25
 
 func isSetUid(filename string) (bool, error) {
 	info, err := os.Stat(filename)
@@ -18,52 +21,69 @@ func isSetUid(filename string) (bool, error) {
 	return info.Mode()&os.ModeSetuid != 0, nil
 }
 
+func logProcess(icon, title string, proc *Process) {
+	if title == "" {
+		title = "Process Info:"
+	}
+
+	fmt.Println(strings.Repeat(icon, width))
+	fmt.Printf(
+		"%s %s\n",
+		icon,
+		title,
+	)
+	fmt.Println(strings.Repeat(icon, width))
+	fmt.Printf(
+		"\n   PID: %s\n   PPID: %s\n   Username: %s (%s)\n   Groupname: %s (%s)\n   Binary: %s\n   Cmdline: %s\n   State: %v\n",
+		proc.Pid(),
+		proc.Ppid(),
+		proc.Uid(),
+		proc.User().Username,
+		proc.Gid(),
+		proc.Group().Name,
+		proc.Binary(),
+		proc.Cmdline(),
+		proc.State(),
+	)
+
+	fmt.Println()
+}
+
 func main() {
 	cUser, err := user.Current()
 	if err != nil {
 		panic(err)
 	}
 
-	goproc, err := GetProcessByPid(strconv.Itoa(os.Getpid()))
+	goProcess, err := GetProcessByPid(strconv.Itoa(os.Getpid()))
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Printf("Current User: %s (UID: %s)\n\n", goproc.User().Username, goproc.User().Uid)
-
+	fmt.Println(strings.Repeat("🧑", width))
+	fmt.Println("🧑 Current User:")
+	fmt.Println(strings.Repeat("🧑", width))
 	fmt.Printf(
-		"Go Parent Process Info:\n  PID: %s\n  PPID: %s\n  Username: %s (%s)\n  Groupname: %s (%s)\n  Binary: %s\n  Cmdline: %v\n\n",
-		goproc.Pid(),
-		goproc.Ppid(),
-		goproc.User().Username,
-		goproc.Uid(),
-		goproc.Group().Name,
-		goproc.Gid(),
-		goproc.Binary(),
-		goproc.Cmdline(),
+		"   Username: %s\n   UID: %s\n   GID: %s\n\n",
+		goProcess.User().Username,
+		goProcess.User().Uid,
+		goProcess.User().Gid,
 	)
 
-	ppid := goproc.Ppid()
+	logProcess("📺", "", goProcess)
+
+	ppid := goProcess.Ppid()
 	for ppid > "1" {
 		proc, err := GetProcessByPid(ppid)
 		if err != nil {
 			break
 		}
 
-		fmt.Printf(
-			"Parent Process Info:\n  PID: %s\n  PPID: %s\n  UID: %s\n  GID: %s\n  Binary: %s\n  Cmdline: %v\n State: %v\n\n",
-			proc.Pid(),
-			proc.Ppid(),
-			proc.Uid(),
-			proc.Gid(),
-			proc.Binary(),
-			proc.Cmdline(),
-			proc.State(),
-		)
+		logProcess("👻", "Parent Process Info:", proc)
 
-		if goproc.Uid() != "0" && proc.Uid() == "0" && proc.Ppid() != "0" /*&& proc.Binary() != "cron" && proc.Binary() != "crond"*/ {
+		if goProcess.Uid() != "0" && proc.Uid() == "0" && proc.Ppid() != "0" && proc.Cmdline()[0] != "/init" /*&& proc.Binary() != "cron" && proc.Binary() != "crond"*/ {
 			fmt.Println(fmt.Errorf("found root process in parent tree: %s (PID: %s)", proc.Binary(), proc.Pid()))
-			// os.Exit(1)
+			os.Exit(1)
 		}
 
 		ppid = proc.Ppid()
@@ -74,10 +94,12 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Print("Root Processes:\n\n")
+	fmt.Println(strings.Repeat("🧙‍♂️", width))
+	fmt.Println("🧙‍♂️ Root Processes:")
+	fmt.Println(strings.Repeat("🧙‍♂️", width))
+	fmt.Println()
 
 	for _, proc := range rprocs {
-		// fmt.Println("PID:", proc.pid, " \tUID:", proc.uid, " \tGID:", proc.gid, " \tBinary:", proc.binary, "\tCmdline:", proc.cmdline)
 		cmd := proc.binary
 		cmdPath, err := exec.LookPath(cmd)
 		if err != nil {
@@ -90,16 +112,7 @@ func main() {
 		}
 
 		if isSetuid {
-			fmt.Printf("  Command: %s\n", cmdPath)
-			fmt.Printf(
-				"    PID: %s\n    PPID: %s\n    UID: %s\n    Cmdline: %s\n    Is %v setuid? %v\n\n",
-				proc.pid,
-				proc.ppid,
-				proc.uid,
-				proc.cmdline,
-				cmdPath,
-				isSetuid,
-			)
+			logProcess("👻", "Root Process Info:", &proc)
 
 			if slices.Contains(proc.cmdline, cUser.Username) && proc.uid != cUser.Uid {
 				panic(fmt.Errorf("found process with current user in it %v", proc))

@@ -87,6 +87,11 @@ func GetProcessByPid(pid string) (*Process, error) {
 		return nil, fmt.Errorf("could not get pid information, pid %s", pid)
 	}
 
+	commPath := path.Join(pidDir, "comm")
+	commBytes, _ := os.ReadFile(commPath)
+
+	binary := strings.TrimSpace(string(commBytes))
+
 	statPath := path.Join(pidDir, "stat")
 	statBytes, err := os.ReadFile(statPath)
 	if err != nil {
@@ -94,10 +99,17 @@ func GetProcessByPid(pid string) (*Process, error) {
 	}
 
 	stats := strings.TrimSpace(string(statBytes))
-	binStart := strings.IndexRune(stats, '(') + 1
-	binEnd := strings.IndexRune(stats[binStart:], ')')
-	binary := stats[binStart : binStart+binEnd]
-	statSlice := strings.Split(strings.TrimSpace(stats[binStart+binEnd+1:]), " ")
+
+	matches := regexp.MustCompile(`^\d+ \((.*)\)`).FindStringSubmatch(stats)
+	if len(matches) < 2 {
+		return nil, fmt.Errorf("could not parse binary name from stat file for PID %s", pid)
+	}
+	statSlice := strings.Split(strings.TrimSpace(stats[len(matches[0]):]), " ")
+
+	// Fallback in case /proc/<pid>/comm file had an issue
+	if binary == "" {
+		binary = matches[1]
+	}
 
 	if len(statSlice) < 2 {
 		return nil, fmt.Errorf("invalid stat format for PID %s", pid)

@@ -82,7 +82,9 @@ func main() {
 		logProcess("👻", "Parent Process Info:", proc)
 
 		if goProcess.Uid() != "0" && proc.Uid() == "0" && proc.Ppid() != "0" && proc.Cmdline()[0] != "/init" /*&& proc.Binary() != "cron" && proc.Binary() != "crond"*/ {
-			fmt.Println(fmt.Errorf("found root process in parent tree: %s (PID: %s)", proc.Binary(), proc.Pid()))
+			fmt.Println(strings.Repeat("🚨", width))
+			fmt.Println("🚨", fmt.Errorf("found root process in parent tree: %s (PID: %s)", proc.Binary(), proc.Pid()))
+			fmt.Println(strings.Repeat("🚨", width))
 			os.Exit(1)
 		}
 

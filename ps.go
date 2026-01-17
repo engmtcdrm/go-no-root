@@ -1,4 +1,4 @@
-package main
+package noroot
 
 import (
 	"fmt"
@@ -73,6 +73,10 @@ func getUIDFromUser(username string) (string, error) {
 	}
 
 	return u.Uid, nil
+}
+
+func GetCurrentGoProcess() (*Process, error) {
+	return GetProcessByPid(strconv.Itoa(os.Getpid()))
 }
 
 func GetProcessByPid(pid string) (*Process, error) {
